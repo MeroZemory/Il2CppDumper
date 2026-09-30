@@ -11,25 +11,26 @@ namespace Il2CppDumper
         private static Config config;
 
         [STAThread]
-        static void Main(string[] args)
+        static int Main(string[] args)
         {
             config = JsonSerializer.Deserialize<Config>(File.ReadAllText(AppDomain.CurrentDomain.BaseDirectory + @"config.json"));
             string il2cppPath = null;
             string metadataPath = null;
             string outputDir = null;
+            var exitCode = 0;
 
             if (args.Length == 1)
             {
                 if (args[0] == "-h" || args[0] == "--help" || args[0] == "/?" || args[0] == "/h")
                 {
                     ShowHelp();
-                    return;
+                    return 0;
                 }
             }
             if (args.Length > 3)
             {
                 ShowHelp();
-                return;
+                return 2;
             }
             if (args.Length > 1)
             {
@@ -54,6 +55,11 @@ namespace Il2CppDumper
                 }
             }
             outputDir ??= AppDomain.CurrentDomain.BaseDirectory;
+            if (args.Length > 0 && il2cppPath == null)
+            {
+                ShowHelp();
+                return 2;
+            }
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 if (il2cppPath == null)
@@ -72,23 +78,24 @@ namespace Il2CppDumper
                         }
                         else
                         {
-                            return;
+                            return 0;
                         }
                     }
                     else
                     {
-                        return;
+                        return 0;
                     }
                 }
             }
             if (il2cppPath == null)
             {
                 ShowHelp();
-                return;
+                return 2;
             }
             if (metadataPath == null)
             {
                 Console.WriteLine($"ERROR: Metadata file not found or encrypted.");
+                exitCode = 1;
             }
             else
             {
@@ -98,10 +105,15 @@ namespace Il2CppDumper
                     {
                         Dump(metadata, il2Cpp, outputDir);
                     }
+                    else
+                    {
+                        exitCode = 1;
+                    }
                 }
                 catch (Exception e)
                 {
                     Console.WriteLine(e);
+                    exitCode = 1;
                 }
             }
             if (config.RequireAnyKey)
@@ -109,6 +121,7 @@ namespace Il2CppDumper
                 Console.WriteLine("Press any key to exit...");
                 Console.ReadKey(true);
             }
+            return exitCode;
         }
 
         static void ShowHelp()
