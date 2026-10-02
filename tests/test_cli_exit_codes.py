@@ -17,7 +17,10 @@ class ExitCodeTests(unittest.TestCase):
 
     def run_cli(self, *args):
         return subprocess.run([self.exe, *map(str, args)], capture_output=True,
-                              text=True, encoding="utf-8", errors="replace")
+                              text=True, encoding="utf-8", errors="replace",
+                              stdin=subprocess.DEVNULL,
+                              creationflags=(subprocess.CREATE_NO_WINDOW |
+                                             subprocess.BELOW_NORMAL_PRIORITY_CLASS) if os.name == "nt" else 0)
 
     def test_help_succeeds(self):
         result = self.run_cli("--help")
@@ -53,6 +56,63 @@ class ExitCodeTests(unittest.TestCase):
             result = self.run_cli(binary, metadata, tmp)
             self.assertEqual(result.returncode, 1)
             self.assertIn("not a supported version[32]", result.stdout)
+            self.assertFalse((Path(tmp) / "dump.cs").exists())
+
+    def test_short_executable_inputs_fail_without_unhandled_exception(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "binary"
+            metadata = Path(tmp) / "global-metadata.dat"
+            metadata.write_bytes(struct.pack("<II", 0xFAB11BAF, 32))
+            for length in range(4):
+                with self.subTest(bytes=length):
+                    binary.write_bytes(bytes(length))
+                    result = self.run_cli(binary, metadata, tmp)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("too short", result.stdout)
+                    self.assertNotIn("Exception", result.stdout + result.stderr)
+                    self.assertFalse((Path(tmp) / "dump.cs").exists())
+
+    def test_short_metadata_inputs_fail_without_unhandled_exception(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "binary"
+            metadata = Path(tmp) / "global-metadata.dat"
+            binary.write_bytes(b"\x7fELF" + bytes(12))
+            for length in range(4):
+                with self.subTest(bytes=length):
+                    metadata.write_bytes(bytes(length))
+                    result = self.run_cli(binary, metadata, tmp)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("too short", result.stdout)
+                    self.assertNotIn("Exception", result.stdout + result.stderr)
+                    self.assertFalse((Path(tmp) / "dump.cs").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows exclusive file lock fixture")
+    def test_input_read_error_returns_failure_without_unhandled_exception(self):
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                      wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "binary"
+            metadata = Path(tmp) / "global-metadata.dat"
+            binary.write_bytes(b"\x7fELF" + bytes(12))
+            metadata.write_bytes(struct.pack("<II", 0xFAB11BAF, 32))
+            # GENERIC_READ, no sharing, OPEN_EXISTING: File.Exists still succeeds,
+            # while the dumper's File.ReadAllBytes must raise an IOException.
+            handle = kernel.CreateFileW(str(binary), 0x80000000, 0, None, 3, 0, None)
+            if handle == ctypes.c_void_p(-1).value:
+                raise ctypes.WinError(ctypes.get_last_error())
+            try:
+                result = self.run_cli(binary, metadata, tmp)
+            finally:
+                kernel.CloseHandle(handle)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Cannot read input file", result.stdout)
+            self.assertNotIn("Exception", result.stdout + result.stderr)
             self.assertFalse((Path(tmp) / "dump.cs").exists())
 
 

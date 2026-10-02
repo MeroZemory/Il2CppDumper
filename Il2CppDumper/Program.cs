@@ -38,7 +38,21 @@ namespace Il2CppDumper
                 {
                     if (File.Exists(arg))
                     {
-                        var file = File.ReadAllBytes(arg);
+                        byte[] file;
+                        try
+                        {
+                            file = File.ReadAllBytes(arg);
+                        }
+                        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                        {
+                            Console.WriteLine($"ERROR: Cannot read input file '{arg}': {e.Message}");
+                            return 1;
+                        }
+                        if (file.Length < sizeof(uint))
+                        {
+                            Console.WriteLine($"ERROR: Input file '{arg}' is too short (at least 4 bytes required).");
+                            return 2;
+                        }
                         if (BitConverter.ToUInt32(file, 0) == 0xFAB11BAF)
                         {
                             metadataPath = arg;
